@@ -1009,10 +1009,14 @@
       max-width: 55px;
       max-height: 100px;
       object-fit: contain;
-      mix-blend-mode: normal;
+      mix-blend-mode: multiply;
       filter: drop-shadow(0 4px 10px rgba(0,0,0,0.15));
       transition: transform 0.3s cubic-bezier(0.16,1,0.3,1), filter 0.3s;
       border-radius: 4px;
+    }
+    /* PNG con trasparenza reale — non serve multiply */
+    .gin-img[src^="data:image/png"] {
+      mix-blend-mode: normal;
     }
     .menu-section[data-id="gin"] .menu-item:hover .gin-img,
     .menu-section[data-id="gin"] .menu-item.tapped .gin-img {
