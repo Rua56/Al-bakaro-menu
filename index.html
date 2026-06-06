@@ -2001,6 +2001,7 @@
 <!-- ═══════════════════ CONTROLS ═══════════════════ -->
 <div class="search-wrap">
   <input type="search" id="searchInput" data-placeholder-t="search" placeholder="Cerca nel menù…" />
+  <div id="search-suggestions"></div>
 </div>
 <nav class="category-nav" id="catNav"></nav>
 
@@ -2595,7 +2596,7 @@ function buildCatNav() {
   const all = document.createElement('button');
   all.className = 'cat-btn' + (currentCat === 'all' ? ' active' : '');
   all.innerHTML = `<span class="cat-btn-icon">🍽️</span> ${t('all')}`;
-  all.addEventListener('click', () => { if (!nav._wasDragging) { currentCat = 'all'; spawnCatParticles(CAT_COLORS['all'] || '#c17f3c'); render(true); } });
+  all.addEventListener('click', () => { currentCat = 'all'; spawnCatParticles(CAT_COLORS['all'] || '#c17f3c'); render(true); });
   nav.appendChild(all);
 
   MENU.forEach(sec => {
@@ -2603,13 +2604,7 @@ function buildCatNav() {
     btn.className = 'cat-btn' + (currentCat === sec.id ? ' active' : '');
     const count = sec.items.length;
     btn.innerHTML = `<span class="cat-btn-icon">${sec.icon}</span> ${sec.name[currentLang]}<span class="cat-badge">${count}</span>`;
-    btn.addEventListener('click', () => {
-      if (!nav._wasDragging) {
-        currentCat = sec.id;
-        spawnCatParticles(CAT_COLORS[sec.id] || '#c17f3c');
-        render(true);
-      }
-    });
+    btn.addEventListener('click', () => { currentCat = sec.id; spawnCatParticles(CAT_COLORS[sec.id] || '#c17f3c'); render(true); });
     nav.appendChild(btn);
   });
 
@@ -3060,10 +3055,7 @@ function setLang(lang) {
   }, 50);
 }
 
-document.getElementById('searchInput').addEventListener('input', e => {
-  searchQuery = e.target.value;
-  render(true);
-});
+// searchInput gestito nella IIFE ricerca
 
 window.addEventListener('scroll', () => {
   document.body.classList.toggle('scrolled', window.scrollY > 10);
@@ -3117,6 +3109,152 @@ function initAnimations() {
 ════════════════════════════════════════ */
 render();
 
+
+/* ════════════════════════════════════════
+   RICERCA CON SUGGERIMENTI
+════════════════════════════════════════ */
+(function() {
+  const input = document.getElementById('searchInput');
+  const box   = document.getElementById('search-suggestions');
+  if (!input || !box) return;
+  // Nascondi subito
+  box.style.display = 'none';
+
+  // Mappa categoria → icona e nome
+  function getCatMeta(catId) {
+    const sec = MENU.find(s => s.id === catId);
+    return {
+      icon: sec?.icon || '🍷',
+      name: sec?.name?.[currentLang] || catId,
+    };
+  }
+
+  function highlight(text, query) {
+    if (!query) return text;
+    const re = new RegExp('(' + query + ')', 'gi');
+    return text.replace(re, '<mark>$1</mark>');
+  }
+
+  function buildSuggestions(q) {
+    if (!q || q.length < 1) { close(); return; }
+    const ql = q.toLowerCase();
+    const results = [];
+
+    MENU.forEach(sec => {
+      sec.items.forEach(item => {
+        const name = item.name[currentLang] || item.name['it'];
+        const desc = item.desc?.[currentLang] || item.desc?.['it'] || '';
+        if (
+          name.toLowerCase().includes(ql) ||
+          desc.toLowerCase().includes(ql)
+        ) {
+          results.push({ item, catId: sec.id });
+        }
+      });
+    });
+
+    if (!results.length) {
+      box.innerHTML = `<div class="sugg-empty">Nessun risultato per "<em>${q}</em>"</div>`;
+      open();
+      return;
+    }
+
+    box.innerHTML = results.slice(0, 8).map(({ item, catId }) => {
+      const meta  = getCatMeta(catId);
+      const name  = item.name[currentLang] || item.name['it'];
+      const price = item.price !== '—' && item.price !== 'GIN'
+        ? `€ ${item.price}`
+        : '';
+      return `<div class="sugg-item" data-cat="${catId}" data-name="${name.replace(/"/g,'&quot;')}">
+        <span class="sugg-item-icon">${meta.icon}</span>
+        <div class="sugg-item-info">
+          <div class="sugg-item-name">${highlight(name, q)}</div>
+          <div class="sugg-item-cat">${meta.name}</div>
+        </div>
+        <span class="sugg-item-price">${price}</span>
+      </div>`;
+    }).join('');
+
+    open();
+  }
+
+  function open()  {
+    box.style.display = 'block';
+    box.style.maxHeight = '320px';
+    box.style.opacity = '1';
+    box.style.pointerEvents = 'all';
+  }
+  function close() {
+    box.style.display = 'none';
+    box.style.maxHeight = '0';
+    box.style.opacity = '0';
+    box.style.pointerEvents = 'none';
+    box.innerHTML = '';
+  }
+  function closeSearch() {
+    close();
+    input.value = '';
+    searchQuery = '';
+    input.blur();
+    render(false);
+  }
+
+  // Input event — debounce 120ms
+  let timer;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    const q = input.value.trim();
+    searchQuery = input.value;
+    if (!q) {
+      // Svuota ricerca completamente
+      searchQuery = '';
+      close();
+      render(true);
+      input.blur();
+      return;
+    }
+    render(true); // aggiorna il filtro in tempo reale
+    timer = setTimeout(() => buildSuggestions(q), 120);
+  });
+
+  // Tap su un suggerimento → vai alla categoria e scrolla al prodotto
+  box.addEventListener('click', e => {
+    const item = e.target.closest('.sugg-item');
+    if (!item) return;
+    const catId = item.dataset.cat;
+    const name  = item.dataset.name;
+
+    // Cambia categoria e chiudi ricerca
+    currentCat = catId;
+    closeSearch();
+    render(true);
+
+    // Scrolla al prodotto dopo il render
+    setTimeout(() => {
+      const cards = document.querySelectorAll('.menu-item');
+      for (const card of cards) {
+        const nameEl = card.querySelector('.item-name');
+        if (nameEl?.textContent.trim().startsWith(name.substring(0, 15))) {
+          card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Evidenzia brevemente
+          card.classList.add('tapped');
+          setTimeout(() => card.classList.remove('tapped'), 800);
+          break;
+        }
+      }
+    }, 350);
+  });
+
+  // Chiudi cliccando fuori
+  document.addEventListener('click', e => {
+    if (!input.contains(e.target) && !box.contains(e.target)) close();
+  });
+
+  // Chiudi su ESC
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeSearch();
+  });
+})();
 
 /* ════════════════════════════════════════
    SORPRENDIMI
@@ -3296,65 +3434,24 @@ render();
   }, { passive: true });
 })();
 
+
+
+
+
+
+
 /* ════════════════════════════════════════
-   DRAG-TO-SCROLL CATEGORIA NAV
+   NAV — DISABILITA CLICK DURANTE SCROLL
 ════════════════════════════════════════ */
 (function() {
   const nav = document.getElementById('catNav');
   if (!nav) return;
-
-  let startX = 0;
-  let scrollLeft = 0;
-  let isDragging = false;
-  let moved = false;
-
-  nav.addEventListener('touchstart', e => {
-    startX    = e.touches[0].clientX;
-    scrollLeft = nav.scrollLeft;
-    isDragging = true;
-    moved = false;
-    nav._wasDragging = false;
+  let scrollTimer = null;
+  nav.addEventListener('scroll', () => {
+    nav.classList.add('scrolling');
+    clearTimeout(scrollTimer);
+    scrollTimer = setTimeout(() => nav.classList.remove('scrolling'), 150);
   }, { passive: true });
-
-  nav.addEventListener('touchmove', e => {
-    if (!isDragging) return;
-    const dx = e.touches[0].clientX - startX;
-    if (Math.abs(dx) > 5) {
-      moved = true;
-      nav._wasDragging = true;
-      nav.scrollLeft = scrollLeft - dx;
-    }
-  }, { passive: true });
-
-  nav.addEventListener('touchend', () => {
-    isDragging = false;
-    // Reset _wasDragging dopo un tick così il click handler lo vede
-    setTimeout(() => { nav._wasDragging = false; }, 50);
-  }, { passive: true });
-
-  // Mouse drag (desktop)
-  nav.addEventListener('mousedown', e => {
-    isDragging = true;
-    moved = false;
-    nav._wasDragging = false;
-    startX = e.clientX;
-    scrollLeft = nav.scrollLeft;
-    nav.style.cursor = 'grabbing';
-  });
-  window.addEventListener('mousemove', e => {
-    if (!isDragging) return;
-    const dx = e.clientX - startX;
-    if (Math.abs(dx) > 5) {
-      moved = true;
-      nav._wasDragging = true;
-      nav.scrollLeft = scrollLeft - dx;
-    }
-  });
-  window.addEventListener('mouseup', () => {
-    isDragging = false;
-    nav.style.cursor = 'grab';
-    setTimeout(() => { nav._wasDragging = false; }, 50);
-  });
 })();
 
 /* ════════════════════════════════════════
